@@ -3,7 +3,7 @@
 ## Description
 This is a Naive Bayes classifier for spam detection in Go. It uses a simple bag-of-words model to train on a dataset of spam and non-spam (ham) emails and then classify new emails as either spam or ham. The algorithm assumes that each word in an email is independent of the other words, which is clearly not true, hence the "naive" in the name of the algorithm.
 
-This project was originally a school assignment that the I enjoyed, written in C++, but was later ported to Go to practice writing Go code and to experiment with parallelization.
+This project was originally a school assignment that I enjoyed, written in C++, but was later ported to Go to practice writing Go code and to experiment with parallelization.
 
 The project solves the problem of classifying a given text file as either spam or ham. The model is trained on a dataset of known spam and real text files and then applied to new a new text file to determine it's classification.
  
