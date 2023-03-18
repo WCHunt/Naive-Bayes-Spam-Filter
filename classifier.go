@@ -93,7 +93,7 @@ func (c *Classifier) calculateProbabilities(smoothing int) {
 		wg.Add(1)
 		go func(subMap map[string]int) {
 			defer wg.Done()
-			for word, count := range subMap {
+			for word := range subMap {
 				if c.realDictionary[word] == 0 && c.spamDictionary[word] != 0 {
 					// ham doesn't have it
 					numerator := float64(smoothing)
@@ -154,8 +154,8 @@ func (c *Classifier) classifyFile(name string, isReal bool) {
 				logPSpam += notIn
 			} else {
 				// both have it
-				logPReal += math.Log(c.probabilities[word].first)
-				logPSpam += math.Log(c.probabilities[word].second)
+				logPReal += math.Log(c.probabilities[word][0])
+				logPSpam += math.Log(c.probabilities[word][1])
 			}
 		}
         if isReal {
@@ -188,8 +188,6 @@ func main() {
 	spam_valid := os.Args[4]
 	smoothing := os.Args[5]
     
-    user_test := os.Args[6]
-
 
     // create classifier
     classifier := Classifier{
@@ -209,11 +207,10 @@ func main() {
     classifier.classifyFile(real_valid, true)
     classifier.classifyFile(spam_valid, false)
     fmt.Println("------------------------------")
-    classifier.classifyFile(user_test, true)
     totalSize := float64(classifier.truePositive + classifier.trueNegative + classifier.falseNegative + classifier.falsePositive)
     specificity := float64(classifier.trueNegative) / float64(classifier.trueNegative + classifier.falsePositive)
     sensitivity := float64(classifier.truePositive) / float64(classifier.truePositive + classifier.falseNegative)
     accuracy := (float64(classifier.truePositive) + float64(classifier.trueNegative)) / totalSize
-    fmt.Printf("%f %f %f\n", specificity, sensitivity, accuracy)
+    fmt.Printf("specificity: %f,sensitivity: %f,accuracy:  %f\n", specificity, sensitivity, accuracy)
 
 }
