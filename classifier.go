@@ -7,6 +7,7 @@ import(
     "log"
     "os"
     "strings"
+	"strconv"
     "sync"
 )
 
@@ -186,7 +187,7 @@ func main() {
     spam_training := os.Args[2]
 	real_valid := os.Args[3]
 	spam_valid := os.Args[4]
-	smoothing := os.Args[5]
+	smoothing := strconv.Atoi(os.Args[5])
     
 
     // create classifier
