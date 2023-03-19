@@ -27,6 +27,7 @@ type Classifier struct {
     falsePositive     float64
     trueNegative      float64
     falseNegative     float64
+	mutex			  sync.Mutex
 }
 
 func (c *Classifier) initializeDictionary(filename string, isReal bool, wg *sync.WaitGroup) {
@@ -43,6 +44,7 @@ func (c *Classifier) initializeDictionary(filename string, isReal bool, wg *sync
 		line := scanner.Text()
 		words := strings.Fields(line)
 		for _, word := range words {
+			c.mutex.Lock()
 			c.totalDictionary[word]++
 			if isReal {
 				c.realDictionary[word]++
@@ -54,6 +56,7 @@ func (c *Classifier) initializeDictionary(filename string, isReal bool, wg *sync
 				c.spamTotalMessages++
 			}
             c.totalWords++
+			c.mutex.Unlock()
 		}
 	}
 
@@ -95,6 +98,7 @@ func (c *Classifier) calculateProbabilities(smoothing int) {
 		go func(subMap map[string]int) {
 			defer wg.Done()
 			for word := range subMap {
+				c.mutex.Lock()
 				if c.realDictionary[word] == 0 && c.spamDictionary[word] != 0 {
 					// ham doesn't have it
 					numerator := float64(smoothing)
@@ -113,6 +117,7 @@ func (c *Classifier) calculateProbabilities(smoothing int) {
 					denominator2 := float64(words2) + (float64(smoothing) * float64(len(alldict)))
 					c.probabilities[word] = [2]float64{numerator1 / denominator1, numerator2 / denominator2}
 				}
+				c.mutex.Unlock()
 			}
 		}(subMaps[i])
 	}
@@ -127,7 +132,8 @@ func (c *Classifier) classProbCalc(smoothing int) {
 	c.ProbSpam = numerator2 / denominator
 }
 
-func (c *Classifier) classifyFile(name string, isReal bool) {
+func (c *Classifier) classifyFile(name string, isReal bool, wg *sync.WaitGroup) {
+	defer wg.Done()
 	file, err := os.Open(name)
 	if err != nil {
 		log.Fatalf("Error: cannot open file %v\n", err)
@@ -159,23 +165,25 @@ func (c *Classifier) classifyFile(name string, isReal bool) {
 				logPSpam += math.Log(c.probabilities[word][1])
 			}
 		}
+		c.mutex.Lock()
         if isReal {
             if logPReal > logPSpam {
-                fmt.Println("real", logPReal, logPSpam)
+                //fmt.Println("real", logPReal, logPSpam)
                 c.truePositive++
             } else {
-                fmt.Println("spam", logPReal, logPSpam)
+                //fmt.Println("spam", logPReal, logPSpam)
                 c.falseNegative++
             }
         } else {
             if logPReal > logPSpam {
-                fmt.Println("real", logPReal, logPSpam)
+                //fmt.Println("real", logPReal, logPSpam)
                 c.falsePositive++
             } else {
-                fmt.Println("spam", logPReal, logPSpam)
+                //fmt.Println("spam", logPReal, logPSpam)
                 c.trueNegative++
             }
         }
+		c.mutex.Unlock()
 	}
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error scanning file: %v\n", err)
@@ -195,9 +203,21 @@ func main() {
 
     // create classifier
     classifier := Classifier{
-		realDictionary:  make(map[string]int),
-		spamDictionary:  make(map[string]int),
-		totalDictionary: make(map[string]int),
+		realDictionary:    make(map[string]int),
+		spamDictionary:    make(map[string]int),
+		totalDictionary:   make(map[string]int),
+		probabilities:     make(map[string][2]float64),
+		ProbReal:          0.0,
+		ProbSpam:          0.0,
+		realTotalWords:    0,
+		spamTotalWords:    0,
+		realTotalMessages: 0,
+		spamTotalMessages: 0,
+		totalWords:        0.0,
+		truePositive:      0.0,
+		falsePositive:     0.0,
+		trueNegative:      0.0,
+		falseNegative:     0.0,
 	}
 
 	var wg sync.WaitGroup
@@ -207,14 +227,15 @@ func main() {
 	wg.Wait()
 
     classifier.calculateProbabilities(smoothing)
-    fmt.Println("----------Validation----------")
-    classifier.classifyFile(real_valid, true)
-    classifier.classifyFile(spam_valid, false)
-    fmt.Println("------------------------------")
+	classifier.classProbCalc(smoothing)
+	var wg2 sync.WaitGroup
+	wg2.Add(2)
+    go classifier.classifyFile(real_valid, true, &wg2)
+    go classifier.classifyFile(spam_valid, false, &wg2)
+	wg2.Wait()
     totalSize := float64(classifier.truePositive + classifier.trueNegative + classifier.falseNegative + classifier.falsePositive)
     specificity := float64(classifier.trueNegative) / float64(classifier.trueNegative + classifier.falsePositive)
     sensitivity := float64(classifier.truePositive) / float64(classifier.truePositive + classifier.falseNegative)
     accuracy := (float64(classifier.truePositive) + float64(classifier.trueNegative)) / totalSize
-    fmt.Printf("specificity: %f,sensitivity: %f,accuracy:  %f\n", specificity, sensitivity, accuracy)
-
+    fmt.Printf("specificity: %f, sensitivity: %f, accuracy:  %f\n", specificity, sensitivity, accuracy)
 }
