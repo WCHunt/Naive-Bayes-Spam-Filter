@@ -1,4 +1,4 @@
-# Naive-Bayes-Spam-Filter
+# Naive-Bayes-Spam-Filter [![Makefile CI](https://github.com/WCHunt/Naive-Bayes-Spam-Filter/actions/workflows/makefile.yml/badge.svg)](https://github.com/WCHunt/Naive-Bayes-Spam-Filter/actions/workflows/makefile.yml)
 
 ## Description
 This is a Naive Bayes classifier for spam detection in Go. It uses a simple bag-of-words model to train on a dataset of spam and non-spam (ham) emails and then classify new emails as either spam or ham. The algorithm assumes that each word in an email is independent of the other words, which is clearly not true, hence the "naive" in the name of the algorithm.
