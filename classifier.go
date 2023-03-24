@@ -1,15 +1,16 @@
 package main
 
 import(
-	"fmt"
     "bufio"
+	"fmt"
+	"log"
     "math"
-    "log"
     "os"
     "strings"
 	"strconv"
     "sync"
 )
+
 
 type Classifier struct {
     realDictionary    map[string]int
@@ -30,16 +31,36 @@ type Classifier struct {
 	mutex			  sync.Mutex
 }
 
+/* 
+	initializeDictionary: This function takes in an input file and initialized the dictionaries
+   	of the Classifier struct and depending on if the input file is a ham(real) or spam text
+   	populates the respective dictionary, increments the total amount of words found in the file
+   	and the number of lines in parallel.
+   	ARGS:
+		filename: the name of the input file
+		isReal: a bool representing if the input file is real or spam text
+		wg *sync.WaitGroup: the wait group that the go routine running this function is.
+*/
 func (c *Classifier) initializeDictionary(filename string, isReal bool, wg *sync.WaitGroup) {
+	//ensures that the waitgroup.done is called at function end.
 	defer wg.Done()
-
+	//open the input file, update err for error checking.
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
+	//ensure the file closes at the end of the function
 	defer file.Close()
-
+	//create a new scanner to read the file line by line.
 	scanner := bufio.NewScanner(file)
+	/* 
+		Loop through the file line by line, split the line into words
+	   	and then store them into a slice. We then loop over the slice
+	   	aquiring the mutex lock before we increment the count of the word found
+	   	in the dictionary, and the total amount of words in the file and lines.
+	   	Finally, we increment the total amount of words found in both files, before we 
+	   	release the mutex lock.
+	*/
 	for scanner.Scan() {
 		line := scanner.Text()
 		words := strings.Fields(line)
@@ -54,21 +75,27 @@ func (c *Classifier) initializeDictionary(filename string, isReal bool, wg *sync
 				c.spamDictionary[word]++
 				c.spamTotalWords++
 				c.spamTotalMessages++
-			}
+			}//end if
             c.totalWords++
 			c.mutex.Unlock()
-		}
-	}
-
+		}//end for range
+	}//end for
+	//check for errors with the scanner
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
 	}
 }
 
+/*
+	calculateProbabilities: This function calculates the probability of each word in the
+	real and spam dictionaries and stores the probabilities in the Classifier's probabilities map.
+	ARGS:
+		smoothing: an int representing the smoothing factor for Laplace smoothing.
+*/
 func (c *Classifier) calculateProbabilities(smoothing int) {
 	// Get the sizes of the real and spam dictionaries
-	words1 := c.realTotalWords
-	words2 := c.spamTotalWords
+	num_real_words := c.realTotalWords
+	num_spam_words := c.spamTotalWords
 
 	// Combine the real and spam dictionaries into one dictionary
 	alldict := make(map[string]int)
@@ -80,7 +107,7 @@ func (c *Classifier) calculateProbabilities(smoothing int) {
 	}
 
 	// Split the alldict map into multiple sub-maps
-	numSubMaps := 4 // You can adjust this to optimize for your specific hardware
+	numSubMaps := 4 
 	subMaps := make([]map[string]int, numSubMaps)
 	for i := 0; i < numSubMaps; i++ {
 		subMaps[i] = make(map[string]int)
@@ -90,31 +117,34 @@ func (c *Classifier) calculateProbabilities(smoothing int) {
 		subMaps[i][word] = count
 		i = (i + 1) % numSubMaps
 	}
-
-	// Calculate the probabilities for each word in parallel
+	/* 	
+		initializes a WaitGroup and loops through numSubMaps subMaps, adding 1 to the WaitGroup for each. 
+	  	It then launches a new goroutine for each subMap, which iterates over the keys in the subMap and calculates the probability for each word
+		based on the contents of c.realDictionary and c.spamDictionary. The probabilities are stored in c.probabilities using a mutex lock,
+		and the WaitGroup is marked as done when the function completes.
+	*/
 	var wg sync.WaitGroup
 	for i := 0; i < numSubMaps; i++ {
 		wg.Add(1)
 		go func(subMap map[string]int) {
+			//ensure that waitgroup.Done is called at end of function.
 			defer wg.Done()
+			//this loop checks if the word is in 1 dictionary or both
 			for word := range subMap {
 				c.mutex.Lock()
 				if c.realDictionary[word] == 0 && c.spamDictionary[word] != 0 {
-					// ham doesn't have it
 					numerator := float64(smoothing)
-					denominator := float64(words1) + (float64(smoothing) * float64(len(alldict)))
-					c.probabilities[word] = [2]float64{numerator / denominator, float64(smoothing + c.spamDictionary[word]) / (float64(words2) + (float64(smoothing) * float64(len(alldict))))}
+					denominator := float64(num_real_words) + (float64(smoothing) * float64(len(alldict)))
+					c.probabilities[word] = [2]float64{numerator / denominator, float64(smoothing + c.spamDictionary[word]) / (float64(num_spam_words) + (float64(smoothing) * float64(len(alldict))))}
 				} else if c.realDictionary[word] != 0 && c.spamDictionary[word] == 0 {
-					// spam doesn't have it
 					numerator := float64(smoothing)
-					denominator := float64(words2) + (float64(smoothing) * float64(len(alldict)))
-					c.probabilities[word] = [2]float64{float64(smoothing + c.realDictionary[word]) / (float64(words1) + (float64(smoothing) * float64(len(alldict)))), numerator / denominator}
+					denominator := float64(num_spam_words) + (float64(smoothing) * float64(len(alldict)))
+					c.probabilities[word] = [2]float64{float64(smoothing + c.realDictionary[word]) / (float64(num_real_words) + (float64(smoothing) * float64(len(alldict)))), numerator / denominator}
 				} else {
-					// both have it
 					numerator1 := float64(smoothing + c.realDictionary[word])
-					denominator1 := float64(words1) + (float64(smoothing) * float64(len(alldict)))
+					denominator1 := float64(num_real_words) + (float64(smoothing) * float64(len(alldict)))
 					numerator2 := float64(smoothing + c.spamDictionary[word])
-					denominator2 := float64(words2) + (float64(smoothing) * float64(len(alldict)))
+					denominator2 := float64(num_spam_words) + (float64(smoothing) * float64(len(alldict)))
 					c.probabilities[word] = [2]float64{numerator1 / denominator1, numerator2 / denominator2}
 				}
 				c.mutex.Unlock()
@@ -124,24 +154,52 @@ func (c *Classifier) calculateProbabilities(smoothing int) {
 	wg.Wait()
 }
 
+/*
+	calculateProbabilities: This function calculates the probability of each word in the
+	real and spam dictionaries and stores the probabilities in the Classifier's probabilities map.
+	ARGS:
+		smoothing: an int representing the smoothing factor for Laplace smoothing.
+*/
 func (c *Classifier) classProbCalc(smoothing int) {
-	numerator1 := float64(c.realTotalMessages + smoothing)
+	// calculate probability of real
+	real_numerator := float64(c.realTotalMessages + smoothing)
 	denominator := float64(c.realTotalMessages + c.spamTotalMessages + (smoothing * 2))
-	c.ProbReal = numerator1 / denominator
-	numerator2 := float64(c.spamTotalMessages + smoothing)
-	c.ProbSpam = numerator2 / denominator
+	c.ProbReal = real_numerator / denominator
+	// calculate probability of spam
+	spam_numerator := float64(c.spamTotalMessages + smoothing)
+	c.ProbSpam = spam_numerator / denominator
 }
 
+/*
+	classifyFile: This function reads in a file and classifies it as either real or spam.
+	The function uses the Classifier's dictionaries and probabilities map to calculate the probability
+	of each word in the file being in either the real or spam dictionary. The function then logs
+	the classification and increments the appropriate metric count in the Classifier struct.
+	ARGS:
+		name: a string representing the name of the file to be classified.
+		isReal: a bool representing whether the file is a real message or a spam message.
+		wg: a pointer to a WaitGroup object used to synchronize goroutines.
+*/
 func (c *Classifier) classifyFile(name string, isReal bool, wg *sync.WaitGroup) {
+	//ensures that the waitgroup.done is called at function end.
 	defer wg.Done()
+	//open the input file, update err for error checking.
 	file, err := os.Open(name)
 	if err != nil {
 		log.Fatalf("Error: cannot open file %v\n", err)
 	}
+	//ensure the file closes at the end of the function
 	defer file.Close()
 
+	//create a new scanner to read the file line by line.
 	scanner := bufio.NewScanner(file)
-
+	/*
+		Loop through each line of a file using a scanner, split the line into words and store them in a slice. 
+		Then, for each word in the slice, acquire a mutex lock before checking whether the word exists in either the real or spam dictionary. 
+		Based on this, calculate the probability of the word being either real or spam using the Classifier's probabilities map, 
+		and add it to the log probabilities for real and spam. Depending on whether the file being classified is real or spam, 
+		update the appropriate counters for true positives, false positives, true negatives, and false negatives. Finally, release the mutex lock.
+	*/
 	for scanner.Scan() {
 		line := scanner.Text()
         notIn := math.Log(1.0 / float64(c.totalWords))
@@ -154,17 +212,16 @@ func (c *Classifier) classifyFile(name string, isReal bool, wg *sync.WaitGroup) 
 			if _, ok := c.probabilities[word]; !ok {
 				continue
 			}
-
+			//check if the word is in either dictionary
 			if c.realDictionary[word] == 0 && c.spamDictionary[word] == 0 {
-				// neither have it.
 				logPReal += notIn
 				logPSpam += notIn
 			} else {
-				// both have it
+				// both dictionaries contain the word
 				logPReal += math.Log(c.probabilities[word][0])
 				logPSpam += math.Log(c.probabilities[word][1])
-			}
-		}
+			}// end if
+		}//end for range
 		c.mutex.Lock()
         if isReal {
             if logPReal > logPSpam {
@@ -182,15 +239,24 @@ func (c *Classifier) classifyFile(name string, isReal bool, wg *sync.WaitGroup) 
                 //fmt.Println("spam", logPReal, logPSpam)
                 c.trueNegative++
             }
-        }
+        }//end if
 		c.mutex.Unlock()
-	}
+	}//end for
+
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("Error scanning file: %v\n", err)
 	}
 }
 
 func main() {
+	/*
+		ARGS:
+			Args[1]: real text file used for training.
+			Args[2]: spam text file used for training.
+			Args[3]: real text file used for validation.
+			Args[4]: spam text file used for validation.
+			Args[5]: integer for Lalace smoothing.
+	*/
 	real_training := os.Args[1]
     spam_training := os.Args[2]
 	real_valid := os.Args[3]
@@ -201,7 +267,7 @@ func main() {
 	}
     
 
-    // create classifier
+    //create classifier
     classifier := Classifier{
 		realDictionary:    make(map[string]int),
 		spamDictionary:    make(map[string]int),
@@ -220,19 +286,22 @@ func main() {
 		falseNegative:     0.0,
 	}
 
+	//initilizes the dictionaries in parallel
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go classifier.initializeDictionary(real_training, true, &wg)
 	go classifier.initializeDictionary(spam_training, false, &wg)
 	wg.Wait()
-
+	//calculate the probabilities
     classifier.calculateProbabilities(smoothing)
 	classifier.classProbCalc(smoothing)
+	//classifies the files in parallel
 	var wg2 sync.WaitGroup
 	wg2.Add(2)
     go classifier.classifyFile(real_valid, true, &wg2)
     go classifier.classifyFile(spam_valid, false, &wg2)
 	wg2.Wait()
+	//calculates the specificity, sensitivity, and accuracy of the classifier
     totalSize := float64(classifier.truePositive + classifier.trueNegative + classifier.falseNegative + classifier.falsePositive)
     specificity := float64(classifier.trueNegative) / float64(classifier.trueNegative + classifier.falsePositive)
     sensitivity := float64(classifier.truePositive) / float64(classifier.truePositive + classifier.falseNegative)
